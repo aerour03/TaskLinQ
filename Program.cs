@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
 using TaskLinQ.Infrastructure;
@@ -10,6 +11,9 @@ DataSeeder.Seed(db);
 
 while (true)
 {
+    Console.WriteLine("\n==========================================");
+    Console.WriteLine("           TASKLINQ QUERY MENU            ");
+    Console.WriteLine("==========================================");
     Console.WriteLine("1. Delivered orders (OrderId, CustomerName, Total) ordered by Total descending\n");
     Console.WriteLine("2. Count orders per status and calculate percentage\n");
     Console.WriteLine("3. Products priced above their own category's average\n");
@@ -32,8 +36,11 @@ while (true)
     Console.WriteLine("20. For each customer, name and most recent order with items\n");
     Console.WriteLine("21. Each customer's favorite category\n");
     Console.WriteLine("22. Rank products by revenue\n");
+    Console.WriteLine("23. Search products with dynamic filters (text, category, price, stock, sorting, paging)\n");
+    Console.WriteLine("24. Increase price by 10% for 'Accessories' with stock below 5 (ExecuteUpdate)\n");
+    Console.WriteLine("25. Delete cancelled orders older than 1 year (ExecuteDelete)\n");
     Console.WriteLine("0. Exit");
-    Console.Write("\nSelect an option (0-22): ");
+    Console.Write("\nSelect an option (0-25): ");
 
     if (!int.TryParse(Console.ReadLine(), out int choice))
     {
@@ -520,8 +527,75 @@ while (true)
             }
             break;
 
+        case 23:
+            var filter = new { Text = "", CategoryName = "", MinPrice = (decimal?)null, MaxPrice = (decimal?)null, InStockOnly = false, SortBy = "Name", Page = 1, PageSize = 5 };
+
+            IQueryable<Product> productQuery = db.Products.Include(p => p.Category).Include(p => p.Reviews);
+
+            if (!string.IsNullOrEmpty(filter.Text))
+                productQuery = productQuery.Where(p => p.Name.Contains(filter.Text));
+
+            if (!string.IsNullOrEmpty(filter.CategoryName))
+                productQuery = productQuery.Where(p => p.Category.Name == filter.CategoryName);
+
+            if (filter.MinPrice.HasValue)
+                productQuery = productQuery.Where(p => p.Price >= filter.MinPrice.Value);
+
+            if (filter.MaxPrice.HasValue)
+                productQuery = productQuery.Where(p => p.Price <= filter.MaxPrice.Value);
+
+            if (filter.InStockOnly)
+                productQuery = productQuery.Where(p => p.Stock > 0);
+
+            int totalCount = productQuery.Count();
+
+            productQuery = filter.SortBy switch
+            {
+                "Name" => productQuery.OrderBy(p => p.Name),
+                "Price" => productQuery.OrderBy(p => p.Price),
+                "Rating" => productQuery.OrderByDescending(p => p.Reviews.Any() ? p.Reviews.Average(r => r.Rating) : 0),
+                _ => productQuery.OrderBy(p => p.Id)
+            };
+
+            var pagedProducts = productQuery
+                .Skip((filter.Page - 1) * filter.PageSize)
+                .Take(filter.PageSize)
+                .Select(p => new
+                {
+                    p.Name,
+                    p.Price,
+                    p.Stock,
+                    Category = p.Category.Name,
+                    AverageRating = p.Reviews.Any() ? p.Reviews.Average(r => r.Rating) : (double?)null
+                })
+                .ToList();
+
+            Console.WriteLine($"Total Count matching filter: {totalCount}\n");
+            foreach (var p in pagedProducts)
+            {
+                Console.WriteLine($"Product: {p.Name}, Price: {p.Price}, Stock: {p.Stock}, Category: {p.Category}, Rating: {p.AverageRating?.ToString("F2") ?? "No reviews"}\n");
+            }
+            break;
+
+        case 24:
+            int updatedRows = db.Products
+                .Where(p => p.Category.Name == "Accessories" && p.Stock < 5)
+                .ExecuteUpdate(s => s.SetProperty(p => p.Price, p => p.Price * 1.1m));
+
+            Console.WriteLine($"Successfully updated prices for {updatedRows} products.\n");
+            break;
+
+        case 25:
+            DateTime oneYearAgo = DateTime.Now.AddYears(-1);
+            int deletedRows = db.Orders
+                .Where(o => o.Status == OrderStatus.Cancelled && o.OrderDate < oneYearAgo)
+                .ExecuteDelete();
+
+            Console.WriteLine($"Successfully deleted {deletedRows} old cancelled orders.\n");
+            break;
+
         default:
-            Console.WriteLine("Invalid option. Please select a number between 0 and 22.\n");
+            Console.WriteLine("Invalid option. Please select a number between 0 and 25.\n");
             break;
     }
 
